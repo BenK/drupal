@@ -1,5 +1,5 @@
 <?php
-// $Id: field_ui.admin.inc,v 1.60 2010/08/10 17:05:18 webchick Exp $
+// $Id: field_ui.admin.inc,v 1.62 2010/08/22 14:14:17 dries Exp $
 
 /**
  * @file
@@ -402,7 +402,7 @@ function field_ui_field_overview_form($form, &$form_state, $entity_type, $bundle
     $name = '_add_existing_field';
     $table[$name] = array(
       '#parents' => array($name),
-      '#attributes' => array('class' => array('draggable', 'tabledrag-leaf', 'menu-disabled')),
+      '#attributes' => array('class' => array('draggable', 'tabledrag-leaf', 'add-new')),
       'label' => array(
         '#type' => 'textfield',
         '#size' => 15,
@@ -817,7 +817,8 @@ function field_ui_display_overview_form($form, &$form_state, $entity_type, $bund
       // We are currently editing this field's formatter settings. Display the
       // settings form and submit buttons.
       $table[$name]['settings_edit_form'] = array();
-      $additions = module_invoke($formatter['module'], 'field_formatter_settings_form', $field, $instance, $view_mode, $form, $form_state);
+      $function = $formatter['module'] . '_field_formatter_settings_form';
+      $additions = $function($field, $instance, $view_mode, $form, $form_state);
       if (is_array($additions)) {
         $table[$name]['settings_edit_form'] = array(
           '#type' => 'container',

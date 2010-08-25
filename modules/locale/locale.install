@@ -1,5 +1,5 @@
 <?php
-// $Id: locale.install,v 1.62 2010/07/29 02:31:40 dries Exp $
+// $Id: locale.install,v 1.64 2010/08/22 13:55:53 dries Exp $
 
 /**
  * @file
@@ -129,7 +129,7 @@ function locale_uninstall() {
     }
     // Delete the JavaScript translations directory if empty.
     if (!file_scan_directory($locale_js_directory, '/.*/')) {
-      rmdir($locale_js_directory);
+      drupal_rmdir($locale_js_directory);
     }
   }
 
@@ -335,7 +335,10 @@ function locale_schema() {
     ),
     'primary key' => array('language', 'lid', 'plural'),
     'foreign keys' => array(
-      'lid' => array('locales_source' => 'lid'),
+      'locales_source' => array(
+        'table' => 'locales_source',
+        'columns' => array('lid' => 'lid'),
+      ),
     ),
     'indexes' => array(
       'lid'      => array('lid'),

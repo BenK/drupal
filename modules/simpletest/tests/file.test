@@ -1,5 +1,5 @@
 <?php
-// $Id: file.test,v 1.61 2010/08/05 23:53:38 webchick Exp $
+// $Id: file.test,v 1.63 2010/08/22 13:52:58 dries Exp $
 
 /**
  *  @file
@@ -108,7 +108,20 @@ class FileTestCase extends DrupalWebTestCase {
     clearstatcache();
 
     // Mask out all but the last three octets.
-    $actual_mode = fileperms($filepath) & 511;
+    $actual_mode = fileperms($filepath) & 0777;
+
+    // PHP on Windows has limited support for file permissions. Usually each of
+    // "user", "group" and "other" use one octal digit (3 bits) to represent the
+    // read/write/execute bits. On Windows, chmod() ignores the "group" and
+    // "other" bits, and fileperms() returns the "user" bits in all three
+    // positions. $expected_mode is updated to reflect this.
+    if (substr(PHP_OS, 0, 3) == 'WIN') {
+      // Reset the "group" and "other" bits.
+      $expected_mode = $expected_mode & 0700;
+      // Shift the "user" bits to the "group" and "other" positions also.
+      $expected_mode = $expected_mode | $expected_mode >> 3 | $expected_mode >> 6;
+    }
+
     if (!isset($message)) {
       $message = t('Expected file permission to be %expected, actually were %actual.', array('%actual' => decoct($actual_mode), '%expected' => decoct($expected_mode)));
     }
@@ -130,7 +143,20 @@ class FileTestCase extends DrupalWebTestCase {
     clearstatcache();
 
     // Mask out all but the last three octets.
-    $actual_mode = fileperms($directory) & 511;
+    $actual_mode = fileperms($directory) & 0777;
+
+    // PHP on Windows has limited support for file permissions. Usually each of
+    // "user", "group" and "other" use one octal digit (3 bits) to represent the
+    // read/write/execute bits. On Windows, chmod() ignores the "group" and
+    // "other" bits, and fileperms() returns the "user" bits in all three
+    // positions. $expected_mode is updated to reflect this.
+    if (substr(PHP_OS, 0, 3) == 'WIN') {
+      // Reset the "group" and "other" bits.
+      $expected_mode = $expected_mode & 0700;
+      // Shift the "user" bits to the "group" and "other" positions also.
+      $expected_mode = $expected_mode | $expected_mode >> 3 | $expected_mode >> 6;
+    }
+
     if (!isset($message)) {
       $message = t('Expected directory permission to be %expected, actually were %actual.', array('%actual' => decoct($actual_mode), '%expected' => decoct($expected_mode)));
     }
@@ -230,13 +256,13 @@ class FileHookTestCase extends FileTestCase {
       $this->assertTrue(FALSE, t('Expected hooks %expected to be called but %uncalled was not called.', array('%expected' => implode(', ', $expected), '%uncalled' => implode(', ', $uncalled))));
     }
     else {
-      $this->assertTrue(TRUE, t('All the expected hooks were called: %expected', array('%expected' => implode(', ', $expected))));
+      $this->assertTrue(TRUE, t('All the expected hooks were called: %expected', array('%expected' => empty($expected) ? t('(none)') : implode(', ', $expected))));
     }
 
     // Determine if there were any unexpected calls.
     $unexpected = array_diff($actual, $expected);
     if (count($unexpected)) {
-      $this->assertTrue(FALSE, t('Unexpected hooks were called: %unexpected.', array('%unexpected' => implode(', ', $unexpected))));
+      $this->assertTrue(FALSE, t('Unexpected hooks were called: %unexpected.', array('%unexpected' => empty($unexpected) ? t('(none)') : implode(', ', $unexpected))));
     }
     else {
       $this->assertTrue(TRUE, t('No unexpected hooks were called.'));
@@ -413,7 +439,7 @@ class FileValidatorTest extends DrupalWebTestCase {
       $this->assertTrue($info['width'] <= 10, t('Image scaled to correct width.'), 'File');
       $this->assertTrue($info['height'] <= 5, t('Image scaled to correct height.'), 'File');
 
-      unlink(drupal_realpath($temp_dir . '/druplicon.png'));
+      drupal_unlink(drupal_realpath($temp_dir . '/druplicon.png'));
     }
     else {
       // TODO: should check that the error is returned if no toolkit is available.
@@ -866,19 +892,26 @@ class FileDirectoryTest extends FileTestCase {
     // Make sure directory actually exists.
     $this->assertTrue(is_dir($directory), t('Directory actually exists.'), 'File');
 
-    // Make directory read only.
-    @chmod($directory, 0444);
-    $this->assertFalse(file_prepare_directory($directory, 0), t('Error reported for a non-writeable directory.'), 'File');
+    if (substr(PHP_OS, 0, 3) != 'WIN') {
+      // PHP on Windows doesn't support any kind of useful read-only mode for
+      // directories. When executing a chmod() on a directory, PHP only sets the
+      // read-only flag, which doesn't prevent files to actually be written
+      // in the directory on any recent version of Windows.
 
-    // Test directory permission modification.
-    $this->assertTrue(file_prepare_directory($directory, FILE_MODIFY_PERMISSIONS), t('No error reported when making directory writeable.'), 'File');
+      // Make directory read only.
+      @drupal_chmod($directory, 0444);
+      $this->assertFalse(file_prepare_directory($directory, 0), t('Error reported for a non-writeable directory.'), 'File');
 
-    // Test directory permission modification actually set correct permissions.
+      // Test directory permission modification.
+      $this->assertTrue(file_prepare_directory($directory, FILE_MODIFY_PERMISSIONS), t('No error reported when making directory writeable.'), 'File');
+    }
+
+    // Test that the directory has the correct permissions.
     $this->assertDirectoryPermissions($directory, variable_get('file_chmod_directory', 0775));
 
     // Remove .htaccess file to then test that it gets re-created.
     $directory = file_directory_path();
-    @unlink($directory . '/.htaccess');
+    @drupal_unlink($directory . '/.htaccess');
     $this->assertFalse(is_file($directory . '/.htaccess'), t('Successfully removed the .htaccess file in the files directory.'), 'File');
     file_ensure_htaccess();
     $this->assertTrue(is_file($directory . '/.htaccess'), t('Successfully re-created the .htaccess file in the files directory.'), 'File');
@@ -1389,20 +1422,44 @@ class FileDeleteTest extends FileHookTestCase {
   }
 
   /**
-   * Try deleting a normal file (as opposed to a directory, symlink, etc).
+   * Tries deleting a normal file (as opposed to a directory, symlink, etc).
    */
-  function testNormal() {
+  function testUnused() {
     $file = $this->createFile();
 
     // Check that deletion removes the file and database record.
-    $this->assertTrue(is_file($file->uri), t("File exists."));
-    $this->assertIdentical(file_delete($file), TRUE, t("Delete worked."));
-    $this->assertFileHooksCalled(array('references', 'delete'));
-    $this->assertFalse(file_exists($file->uri), t("Test file has actually been deleted."));
+    $this->assertTrue(is_file($file->uri), t('File exists.'));
+    $this->assertIdentical(file_delete($file), TRUE, t('Delete worked.'));
+    $this->assertFileHooksCalled(array('delete'));
+    $this->assertFalse(file_exists($file->uri), t('Test file has actually been deleted.'));
     $this->assertFalse(file_load($file->fid), t('File was removed from the database.'));
+  }
 
-    // TODO: implement hook_file_references() in file_test.module and report a
-    // file in use and test the $force parameter.
+  /**
+   * Tries deleting a file that is in use.
+   */
+  function testInUse() {
+    $file = $this->createFile();
+    file_usage_add($file, 'testing', 'test', 1);
+    file_usage_add($file, 'testing', 'test', 1);
+
+    file_usage_delete($file, 'testing', 'test', 1);
+    file_delete($file);
+    $usage = file_usage_list($file);
+    $this->assertEqual($usage['testing']['test'], array('id' => 1, 'count' => 1), t('Test file is still in use.'));
+    $this->assertTrue(file_exists($file->uri), t('File still exists on the disk.'));
+    $this->assertTrue(file_load($file->fid), t('File still exists in the database.'));
+
+    // Clear out the call to hook_file_load().
+    file_test_reset();
+
+    file_usage_delete($file, 'testing', 'test', 1);
+    file_delete($file);
+    $usage = file_usage_list($file);
+    $this->assertFileHooksCalled(array('delete'));
+    $this->assertTrue(empty($usage), t('File usage data was removed.'));
+    $this->assertFalse(file_exists($file->uri), t('File has been deleted after its last usage was removed.'));
+    $this->assertFalse(file_load($file->fid), t('File was removed from the database.'));
   }
 }
 
@@ -1504,7 +1561,7 @@ class FileMoveTest extends FileHookTestCase {
     $this->assertTrue($result, t('File moved sucessfully.'));
 
     // Check that the correct hooks were called.
-    $this->assertFileHooksCalled(array('move', 'update', 'delete', 'references', 'load'));
+    $this->assertFileHooksCalled(array('move', 'update', 'delete', 'load'));
 
     // Reload the file from the database and check that the changes were
     // actually saved.
@@ -1853,6 +1910,108 @@ class FileSaveTest extends FileHookTestCase {
   }
 }
 
+/**
+ * Tests file usage functions.
+ */
+class FileUsageTest extends FileTestCase {
+  function getInfo() {
+    return array(
+      'name' => 'File usage',
+      'description' => 'Tests the file usage functions.',
+      'group' => 'File',
+    );
+  }
+
+  /**
+   * Tests file_usage_list().
+   */
+  function testGetUsage() {
+    $file = $this->createFile();
+    db_insert('file_usage')
+      ->fields(array(
+        'fid' => $file->fid,
+        'module' => 'testing',
+        'type' => 'foo',
+        'id' => 1,
+        'count' => 1
+      ))
+      ->execute();
+    db_insert('file_usage')
+      ->fields(array(
+        'fid' => $file->fid,
+        'module' => 'testing',
+        'type' => 'bar',
+        'id' => 2,
+        'count' => 2
+      ))
+      ->execute();
+
+    $usage = file_usage_list($file);
+
+    $this->assertEqual(count($usage['testing']), 2, t('Returned the correct number of items.'));
+    $this->assertEqual($usage['testing']['foo']['id'], 1, t('Returned the correct id.'));
+    $this->assertEqual($usage['testing']['bar']['id'], 2, t('Returned the correct id.'));
+    $this->assertEqual($usage['testing']['foo']['count'], 1, t('Returned the correct count.'));
+    $this->assertEqual($usage['testing']['bar']['count'], 2, t('Returned the correct count.'));
+  }
+
+  /**
+   * Tests file_usage_add().
+   */
+  function testAddUsage() {
+    $file = $this->createFile();
+    file_usage_add($file, 'testing', 'foo', 1);
+    // Add the file twice to ensure that the count is incremented rather than
+    // creating additional records.
+    file_usage_add($file, 'testing', 'bar', 2);
+    file_usage_add($file, 'testing', 'bar', 2);
+
+    $usage = db_select('file_usage', 'f')
+      ->fields('f')
+      ->condition('f.fid', $file->fid)
+      ->execute()
+      ->fetchAllAssoc('id');
+    $this->assertEqual(count($usage), 2, t('Created two records'));
+    $this->assertEqual($usage[1]->module, 'testing', t('Correct module'));
+    $this->assertEqual($usage[2]->module, 'testing', t('Correct module'));
+    $this->assertEqual($usage[1]->type, 'foo', t('Correct type'));
+    $this->assertEqual($usage[2]->type, 'bar', t('Correct type'));
+    $this->assertEqual($usage[1]->count, 1, t('Correct count'));
+    $this->assertEqual($usage[2]->count, 2, t('Correct count'));
+  }
+
+  /**
+   * Tests file_usage_delete().
+   */
+  function testRemoveUsage() {
+    $file = $this->createFile();
+    db_insert('file_usage')
+      ->fields(array(
+        'fid' => $file->fid,
+        'module' => 'testing',
+        'type' => 'bar',
+        'id' => 2,
+        'count' => 2
+      ))
+      ->execute();
+
+    file_usage_delete($file, 'testing', 'bar', 2);
+    $count = db_select('file_usage', 'f')
+      ->fields('f', array('count'))
+      ->condition('f.fid', $file->fid)
+      ->execute()
+      ->fetchField();
+    $this->assertEqual(1, $count, t('The count was decremented correctly.'));
+
+    file_usage_delete($file, 'testing', 'bar', 2);
+    $count = db_select('file_usage', 'f')
+      ->fields('f', array('count'))
+      ->condition('f.fid', $file->fid)
+      ->execute()
+      ->fetchField();
+    $this->assertEqual(0, $count, t('The count was decremented correctly.'));
+  }
+}
 
 /**
  * Tests the file_validate() function..
